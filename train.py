@@ -1,107 +1,74 @@
-import numpy as np
-import pandas as pd
-import pickle
-import os
-import xgboost as xgb
+from Feature_engineering import *
+from sklearn.pipeline import make_pipeline
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import SelectKBest
+from sklearn.ensemble.gradient_boosting import GradientBoostingClassifier
 from sklearn.svm import SVR
+from sklearn.cross_validation import cross_val_score, KFold, cross_val_predict
+import xgboost as xgb
 from sklearn.linear_model import LinearRegression
-from sklearn.cross_validation import *
 from sklearn.neural_network import MLPRegressor
-from sklearn.preprocessing import StandardScaler
+#from sklearn.preprocessing import StandardScaler
+#from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.cross_decomposition import PLSRegression
 from sklearn.tree import DecisionTreeRegressor
+from sklearn.linear_model import Lasso
+from sklearn.ensemble import AdaBoostRegressor
 
-path = os.getcwd()
-df = pd.read_csv(path + '/data.csv', sep = ',')
-#Select model to use below
-use_SVR = 1
-use_LR = 1
-use_MLP = 1
-use_XGB = 1
-use_RFR = 1
-use_PLSR = 1
-use_DTR = 1
 
-def classify_hour(hour):
-    """ Classify the hour based on some aggregate ranges"""
-    #Aggregate hours into 4 classes, 8-11/12-15/16-19/20-23
-    if hour >=8 and hour  <= 11:
-        return 1
-    elif hour >= 12 and hour <= 15:
-        return 2
-    elif hour >= 16 and hour <= 19:
-        return 3
-    elif hour >= 20 and hour <= 23:
-        return 4
-    raise Exception("Hour out of bounds")
+#from sklearn.ensemble import ExtraTreesClassifier
+#from sklearn.feature_selection import SelectFromModel
 
-def predict(model,input,output,kf,dataframe,modelname):
-    """Train the model and save estimates"""
-    #Get mean absolute error and mean squared error, and save them into a file
-    MAE = cross_val_score(model, input, output, cv=kf, n_jobs = 1,scoring= 'mean_absolute_error')
-    MSE = cross_val_score(model, input, output, cv=kf, n_jobs = 1,scoring= 'mean_squared_error')
-    parameter = open(path + '/parameters.txt','a')
-    parameter.write('%s MAE and MSE is %f and %f respectively\n' % \
-                    (modelname, -sum(MAE) / float(len(MAE)),-sum(MSE) / float(len(MSE))))
-    parameter.close()
-    print "Saved the %s model parameters." % modelname
-    #Get estimates and save them into a csv file
-    predicted = cross_val_predict(model, input, output, cv=kf, n_jobs = 1)
-    dataframe[modelname] = pd.DataFrame(np.asarray(predicted))
-    dataframe.to_csv(path+ '/estimate.csv',sep=',')
-    #Dump the model into a file use pickle
-    pipeline_set = model.fit(input,output)
-    file_name = modelname
-    fileObject = open(path + '/' + file_name,'wb')
-    pickle.dump(pipeline_set, fileObject)
-    fileObject.close()
-    print "Pickled the %s model." % modelname
+use_model = ['SVR', 'DTR', 'RFR', 'XGB', 'MLP', 'ABR', 'LR']
+
 
 def main():
-    """Train different models"""
-    X = []
-    y = []
-    #Prepare training data
-    for i in range(df.shape[0]):
-        df.loc[i,'timerange'] = classify_hour(df.loc[i,'time'])
-        X.append([df.loc[i,'timerange'], df.loc[i,'weekdays'], df.loc[i,'season'], df.loc[i,'grid_location_row'], \
-                  df.loc[i,'grid_location_col'], df.loc[i,'co_chullora'], df.loc[i,'co_liverpool'], df.loc[i,'co_prospect'],\
-                  df.loc[i,'co_rozelle']])
-        y.append(df.loc[i,'co'])        
-    x = np.float64(X)
-    y = np.float64(y)
-    #Split the data into 10 folds
-    kf_total = KFold(df.shape[0] ,n_folds=10, shuffle=True, random_state=0)
+    total_set, train_set, test_set, total_set_nonscale, train_set_nonscale, test_set_nonscale = feature_engineering('data.csv')
+    total_set_input = total_set.drop('co',axis = 1)
+    total_set_output= total_set.co
+    train_set_input = train_set.drop('co',axis = 1)
+    train_set_output = train_set.co
+    test_set_input = test_set.drop('co',axis = 1)
+    test_set_output = test_set.co
+    total_set_nonscale_input = total_set_nonscale.drop('co',axis = 1)
+    total_set_nonscale_output = total_set_nonscale.co
+    train_set_nonscale_input = train_set_nonscale.drop('co',axis = 1)
+    train_set_nonscale_output = train_set_nonscale.co
+    test_set_nonscale_input = test_set_nonscale.drop('co',axis = 1)
+    test_set_nonscale_output = test_set_nonscale.co
+    kf_total = KFold(total_set_input.shape[0],n_folds=10, shuffle=True, random_state=0)
+    kf_train = KFold(train_set_input.shape[0],n_folds=10, shuffle=True, random_state=0)
     #Train different models
-    if use_SVR:
-        clf = SVR(C=1.0,epsilon=0.2,gamma='auto',kernel='rbf',verbose=True,cache_size=3000)
-        predict(clf, x, y, kf_total, df, 'SVR')
-    if use_LR:
-        clf = LinearRegression(fit_intercept=True, normalize=False)
-        predict(clf, x, y, kf_total, df, 'LR')
-    if use_MLP:
-        clf = MLPRegressor(hidden_layer_sizes = 150, learning_rate_init=0.001, max_iter=500)
-        scaler = StandardScaler()
-        scaler.fit(x)
-        x = scaler.transform(x)
-        predict(clf, x, y, kf_total, df, 'MLP')
-    if use_XGB:
-        clf = xgb.XGBRegressor()
-        predict(clf, x, y, kf_total, df, 'XGB')
-    if use_RFR:
-        clf = RandomForestRegressor(min_samples_leaf = 20)
-        predict(clf, x, y, kf_total, df, 'RFR')
-    if use_PLSR:
-        clf = PLSRegression()
-        predict(clf, x, y, kf_total, df, 'PLSR')
-    if use_DTR:
-        clf = DecisionTreeRegressor(max_depth=500,min_samples_leaf =20)
-        predict(clf, x, y, kf_total, df, 'DTR')
-
+    df = pd.DataFrame(test_set_output,columns=['co'])
+    df['co_original'] = (df['co'] * 5.74640) + 3.48652
+    for model in use_model:
+        if model == 'MLP':
+            clf = MLPRegressor(hidden_layer_sizes = 150, learning_rate_init=0.001, max_iter=500)
+            cross_validation(clf, total_set_input, total_set_output,  kf_total, model)
+            save_model(clf,train_set_input, train_set_output,model)
+            test(model, test_set_input,test_set_output,df)
+        else:
+            if model == 'SVR':
+                clf = SVR(C=1.0,epsilon=0.2,gamma='auto',kernel='rbf',verbose=True,cache_size=3000)
+            elif model == 'LR':
+                clf = LinearRegression(fit_intercept=True, normalize=False)
+            elif model == 'XGB':
+                clf = xgb.XGBRegressor()
+            elif model == 'RFR':
+                clf = RandomForestRegressor(min_samples_leaf = 10)
+            elif model == 'DTR':
+                clf = DecisionTreeRegressor(max_depth=500,min_samples_leaf = 10)
+            elif model == 'ABR':
+                clf = AdaBoostRegressor()
+            else:
+                print 'Wrong model!'
+            cross_validation(clf, total_set_nonscale_input, total_set_nonscale_output, kf_total, model)
+            save_model(clf, train_set_nonscale_input, train_set_nonscale_output, model)
+            test(model,test_set_nonscale_input, test_set_nonscale_output, df)
 
 if __name__ == "__main__":
-    """Start the scripts."""
-    print 'Training start.'
+    print 'Training Start!'
     main()
-    print 'Training end.'
+    print 'Done!'
+
+
